@@ -1,0 +1,57 @@
+- name: Create a new  EC2 instance and attaching it to ELB
+  hosts: localhost
+  gather_facts: False
+
+  tasks:
+  	 - name: Create security group
+      ec2_group:
+        name: t_sg
+        description: testsg
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+		  - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: 0.0.0.0/0	
+
+    - name: Create an ec2 instance
+      ec2:
+         key_name: "{{ keypair }}"
+         instance_type: "{{ instance_type}}"
+         image: "{{ ami }}"
+		 group: t_sg
+         wait: true
+         region: "{{ region }}"
+         count: 1  
+         user_data: "{{ lookup( 'file', 'temp.sh') }}"
+      register: e2
+	  
+    - wait_for: host={{item.public_ip}} port=80 delay=60 timeout=320 state=started
+      with_items: "{{ e2.instances }}"
+	
+	- uri:
+		url: {{item.public_ip}}
+		return_content: yes
+	   with_items: "{{ e2.instances }}"
+	  register: webcode
+	 
+	
+	  
+    - ec2_elb:
+       instance_id: "{{ item.id }}"
+       ec2_elbs: "{{elbname}}"
+       state: present
+       region: "{{ region }}"
+	   when webcode.status=200
+      with_items: "{{ e2.instances }}"
+
+    - ec2_elb:
+       instance_id: "{{ old_instance_id }}"
+       ec2_elbs: "{{elbname}}"
+       state: absent
+       region: "{{ region }}"
+      when webcode.status=200
